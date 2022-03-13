@@ -5,90 +5,104 @@
 #include <vector>
 #include <cstddef>
 #include <fstream>
+#include <filesystem>
+#include <system_error>
 #include <unordered_map>
 
+#include "bitVector.h"
+
+template<typename T>
 class Huffman
 {
  public:
 	struct freqPair {
-		char	 val;
+		T		 val;
 		uint32_t count;
 	};
 
 	class compressed {
 	public:
-		std::vector<freqPair> frequencies;
-		std::vector<bool> data;
+		bitVector m_data;
+		std::vector<freqPair> m_frequencies;
 
-		bool isFull()  { return data.size() >  0; }
-		bool isEmpty() { return data.size() == 0; }
+		bool isFull()  { return m_data.size() >  0; }
+		bool isEmpty() { return m_data.size() == 0; }
 
 		void save(const std::string& fileName) {
 			std::ofstream outfile(fileName, std::ofstream::binary);
 
-			uint64_t word = frequencies.size();
+			uint64_t word = m_frequencies.size();
 			outfile.write((const char*)&word, sizeof(uint64_t));
 
-			for (auto p : frequencies) {
-				outfile.write(&p.val, sizeof(char));
-				outfile.write((const char*)&p.count, sizeof(uint32_t));
-			}
-
-			word = data.size();
+			word = m_data.size();
 			outfile.write((const char*)&word, sizeof(uint64_t));
 
-			uint_fast8_t bits = 0;
-			for (size_t i = 0; i < data.size(); i++) {
-				word = word << 1 | data[i];
-				bits++;
+			for (auto p : m_frequencies)
+				outfile.write((char*)&p, sizeof(freqPair));
 
-				if (bits == sizeof(uint64_t) * CHAR_BIT) {
-					outfile.write((const char*)&word, sizeof(uint64_t));
-					bits = 0;
-				}
-			}
-
-			if (bits != 0) {
-				word <<= (sizeof(uint64_t) * CHAR_BIT - bits);
-				outfile.write((const char*)&word, sizeof(uint64_t));
-			}
+			outfile.write((const char*)m_data.m_data.data(), m_data.m_data.size() * sizeof(uint64_t));
 
 			outfile.close();
+
+			if (!outfile.good())
+				throw std::filesystem::filesystem_error(std::string("File " + fileName + " write failed"),
+														std::error_code::error_code());
 		}
 
 		void load(const std::string& fileName) {
-			data.clear();
-			frequencies.clear();
+			m_data.clear();
+			m_frequencies.clear();
+
+			std::filesystem::path filePath(fileName);
+			if (!std::filesystem::exists(filePath))
+				throw std::filesystem::filesystem_error(std::string("File " + fileName + " not found"),
+														std::error_code::error_code());
+
+			auto fileSize = file_size(filePath);
+
+			if (fileSize < 2 * sizeof(uint64_t)) [[unlikely]] {
+				throw std::filesystem::filesystem_error(std::string("File " + fileName + " too short"),
+														std::error_code::error_code());
+			}
 
 			std::ifstream infile(fileName, std::ofstream::binary);
-			uint64_t word;
-			infile.read((char*)&word, sizeof(uint64_t));
 
-			freqPair p;
-			for (uint64_t i = 0; i < word; i++) {
-				infile.read(&p.val, sizeof(char));
-				infile.read((char*)&p.count, sizeof(uint32_t));
-				frequencies.push_back(p);
-			}
+			uint64_t numPairs;
+			infile.read((char*)&numPairs, sizeof(uint64_t));
 
-			uint64_t totalBits, mask = 0;
+			uint64_t totalBits;
 			infile.read((char*)&totalBits, sizeof(uint64_t));
 
-			for (size_t i = 0; i < totalBits; i++) {
-				if (mask == 0) {
-					infile.read((char*)&word, sizeof(uint64_t));
-					mask = 1ULL << 63;
-				}
+			uint64_t numWords = totalBits / 64 + 1;
 
-				data.push_back((word & mask) != 0);
-				mask >>= 1;
+			if (fileSize < numPairs * sizeof(freqPair) + numWords * sizeof(uint64_t) + 2 * sizeof(uint64_t)) [[unlikely]] {
+				throw std::filesystem::filesystem_error(std::string("File " + fileName + " too short"),
+														std::error_code::error_code());
 			}
 
+			freqPair p;
+			for (uint64_t i = 0; i < numPairs; i++) {
+				infile.read((char*)&p, sizeof(freqPair));
+				m_frequencies.push_back(p);
+			}
+
+			m_data.resize(totalBits);
+			infile.read((char*)m_data.m_data.data(), numWords * sizeof(uint64_t));
+
 			infile.close();
+
+			if (!infile.good()) {
+				m_data.clear();
+				m_frequencies.clear();
+
+				throw std::filesystem::filesystem_error(std::string("File " + fileName + " read failed"),
+																	std::error_code::error_code());
+			}
 		}
 	};
 
  private:
+	template<typename T>
 	class Tree
 	{
 	public:
@@ -96,9 +110,9 @@ class Huffman
 
 		struct node
 		{
-			node(char v = '\0', uint32_t c = 0, node* l = nullptr, node* r = nullptr) : val(v), count(c), left(l), right(r) {}
+			node(T v = '\0', uint32_t c = 0, node* l = nullptr, node* r = nullptr) : val(v), count(c), left(l), right(r) {}
 
-			char val;
+			T val;
 			uint32_t count;
 			node *left, *right;
 
@@ -131,9 +145,9 @@ class Huffman
 			}
 		}
 
-		std::map<char, std::vector<bool>> createDictionary() {
-			std::vector<bool> prefix;
-			std::map<char, std::vector<bool>> dictionary;
+		std::map<T, bitVector> createDictionary() {
+			bitVector prefix;
+			std::map<T, bitVector> dictionary;
 
 			if (Root)
 				createDictionary(Root, prefix, dictionary);
@@ -143,8 +157,8 @@ class Huffman
 
 	private:
 		void createDictionary(const node* Node,
-							  std::vector<bool>& currPrefix,
-							  std::map<char, std::vector<bool>>& dictionary) {
+							  bitVector& currPrefix,
+							  std::map<T, bitVector>& dictionary) {
 			if (Node->left) {
 				currPrefix.push_back(false);
 				createDictionary(Node->left, currPrefix, dictionary);
@@ -160,28 +174,25 @@ class Huffman
 
 	class nodeCompare {
 	public:
-		bool operator()(const Tree::node* lhs, const Tree::node* rhs) {
-			if (lhs->count != rhs->count)
-				return lhs->count > rhs->count;
-			else
-				return lhs->val > rhs->val;
+		bool operator()(const typename Tree<T>::node* lhs, const typename Tree<T>::node* rhs) {
+			return lhs->count != rhs->count ? lhs->count > rhs->count : lhs->val > rhs->val;
 		}
 	};
 
-	Tree createTree(const std::unordered_map<char, uint32_t>& frequencies) {
-		std::priority_queue<Tree::node*, std::vector<Tree::node*>, nodeCompare> priQ;
-		for (auto& p : frequencies) priQ.push(new Tree::node(p.first, p.second));
+	Tree<T> createTree(const std::unordered_map<T, uint32_t>& frequencies) {
+		std::priority_queue<typename Tree<T>::node*, std::vector<typename Tree<T>::node*>, nodeCompare> priQ;
+		for (auto& p : frequencies) priQ.push(new Tree<T>::node(p.first, p.second));
 
 		while (priQ.size() > 1) {
 			auto left = priQ.top();
 			priQ.pop();
 			auto right = priQ.top();
 			priQ.pop();
-			auto newNode = new Tree::node(left->val, left->count + right->count, left, right);
+			auto newNode = new Tree<T>::node(left->val, left->count + right->count, left, right);
 			priQ.push(newNode);
 		}
 
-		Tree t(priQ.top());
+		Tree<T> t(priQ.top());
 		priQ.pop();
 
 		return t;
@@ -192,17 +203,17 @@ class Huffman
 		 compressed retVal;
 
 		 if (data.length()) {
-			 std::unordered_map<char, uint32_t> frequencies;
+			 std::unordered_map<T, uint32_t> frequencies;
 			 for (auto c : data) frequencies[c]++;
 
 			 auto tree = createTree(frequencies);
 			 auto dictionary = tree.createDictionary();
 
 			 for (auto& f : frequencies)
-				 retVal.frequencies.push_back(freqPair(f.first, f.second));
+				 retVal.m_frequencies.push_back(freqPair(f.first, f.second));
 
 			 for (auto ch : data)
-				 std::copy(dictionary[ch].begin(), dictionary[ch].end(), std::back_inserter(retVal.data));
+				 retVal.m_data.push_back(dictionary[ch]);
 		 }
 
 		 return retVal;
@@ -211,17 +222,18 @@ class Huffman
 	 std::string decompress(const compressed& cdata) {
 		 std::string retVal;
 
-		 if (cdata.frequencies.size() > 0 && cdata.data.size() > 0) {
-			 std::unordered_map<char, uint32_t> frequencies;
+		 if (cdata.m_frequencies.size() > 0 && cdata.m_data.size() > 0) {
+			 std::unordered_map<T, uint32_t> frequencies;
 
-			 for (auto& p : cdata.frequencies)
+			 for (auto& p : cdata.m_frequencies)
 				 frequencies[p.val] = p.count;
 
 			 auto tree = createTree(frequencies);
 
-			 Tree::node *currNode = tree.Root;
+			 typename Tree<T>::node *currNode = tree.Root;
 
-			 for (auto bit : cdata.data) {
+			 for (size_t i = 0; i < cdata.m_data.size(); i++) {
+				 bool bit = cdata.m_data[i];
 				 currNode = bit ? currNode->right : currNode->left;
 
 				 if (currNode->isLeaf()) {
