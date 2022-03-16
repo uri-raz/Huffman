@@ -67,3 +67,25 @@ size_t bitVector::popcount() const {
 
 	return retVal;
 }
+
+void bitVector::clear() noexcept {
+	m_data.clear();
+	m_data.push_back(0);
+	m_freeBits = 64;
+}
+
+bitVector::bitProxy& bitVector::bitProxy::operator=(bool val) {
+	if (bitNumber > myVector.size()) {
+		throw std::out_of_range("bitVector::operator= : index out of range");
+	}
+
+	size_t word = bitNumber / 64;
+	size_t bit = 63 - (bitNumber - 64 * word);
+
+	if (val)
+		myVector.m_data[word] |= 1ULL << bit;
+	else
+		myVector.m_data[word] &= ~(1ULL << bit);
+
+	return *this;
+}

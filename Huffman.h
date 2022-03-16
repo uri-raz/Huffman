@@ -219,10 +219,10 @@ class Huffman
 		 return retVal;
 	 }
 
-	 std::string decompress(const compressed& cdata) {
+	 std::string decompress(compressed& cdata) {
 		 std::string retVal;
 
-		 if (cdata.m_frequencies.size() > 0 && cdata.m_data.size() > 0) {
+		 if (cdata.m_frequencies.size() && cdata.m_data.size()) {
 			 std::unordered_map<T, uint32_t> frequencies;
 
 			 for (auto& p : cdata.m_frequencies)
@@ -230,12 +230,11 @@ class Huffman
 
 			 auto tree = createTree(frequencies);
 
-			 typename Tree<T>::node *currNode = tree.Root;
+			 typename Tree<T>::node* currNode = tree.Root;
 
-			 for (size_t i = 0; i < cdata.m_data.size(); i++) {
-				 bool bit = cdata.m_data[i];
-				 currNode = bit ? currNode->right : currNode->left;
-
+			 for (auto bit : cdata.m_data) {
+				currNode = bit ? currNode->right : currNode->left;
+				 
 				 if (currNode->isLeaf()) {
 					 retVal.push_back(currNode->val);
 					 currNode = tree.Root;
