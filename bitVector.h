@@ -41,7 +41,6 @@ public:
 		using value_type = bool;
 		using pointer	 = bitProxy;
 		using reference	 = bitProxy;
-		using difference_type	= void;
 		using iterator_category	= std::contiguous_iterator_tag;
 
 		iterator() : proxy(nullptr) {}
@@ -53,15 +52,17 @@ public:
 		}
 
 		iterator operator++() {
+			auto tmp = this;
 			proxy->bitNumber = std::min(proxy->bitNumber + 1, proxy->myVector.size() + 1);
 
-			return *this;
+			return *tmp;
 		}
 
 		iterator operator--(int) {
+			auto tmp = this;
 			proxy->bitNumber = proxy->bitNumber ? proxy->bitNumber-- : 0;
 
-			return *this;
+			return *tmp;
 		}
 
 		iterator operator--() {
@@ -149,7 +150,7 @@ public:
 
 	iterator end() {
 		iterator retVal;
-		retVal.proxy = new bitProxy(size() + 1, *this);
+		retVal.proxy = new bitProxy(size(), *this);
 
 		return retVal;
 	}
